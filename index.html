@@ -15265,16 +15265,17 @@
             pixelArt: true
         };
 
+        let activePadIndex = null;
         const game = window.__phaserGame = new Phaser.Game(config);
 
         // Keep a connected controller selected across scenes and ignore stale slots.
         Phaser.Input.Gamepad.GamepadPlugin.prototype.getPad = function() {
             const pads = (this.gamepads || []).filter(pad => pad && pad.connected);
-            return pads.find(pad => pad.index === this.game.registry.get('activePadIndex'))
+            return pads.find(pad => pad.index === activePadIndex)
                 || pads.find(pad => pad.pad?.mapping === 'standard') || pads[0] || null;
         };
         window.addEventListener('gamepadconnected', event => {
-            game.registry.set('activePadIndex', event.gamepad.index);
+            activePadIndex = event.gamepad.index;
             document.getElementById('pad-status').textContent = 'コントローラー接続済み';
         });
         window.addEventListener('gamepaddisconnected', () => {
