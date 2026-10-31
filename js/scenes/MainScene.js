@@ -2471,10 +2471,78 @@ class MainScene extends Phaser.Scene {
         }
     }
 
+    generateDungeonLayout(cols, rows) {
+        const map = Array.from({length: rows}, () => Array(cols).fill(1));
+        const rooms = [];
+        const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+        // Six randomized rooms in separate sectors: bounded generation, no retries.
+        for (let gy = 0; gy < 2; gy++) {
+            for (let gx = 0; gx < 3; gx++) {
+                const w = rand(12, 17), h = rand(10, 16);
+                const x = gx * 24 + rand(3, 21 - w);
+                const y = gy * 24 + rand(3, 21 - h);
+                const room = {x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2)};
+                rooms.push(room);
+                for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) map[yy][xx] = 0;
+            }
+        }
+        const carve = (x, y) => {
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+                if (x+dx > 0 && y+dy > 0 && x+dx < cols-1 && y+dy < rows-1) map[y+dy][x+dx] = 0;
+            }
+        };
+        const link = (a, b) => {
+            let x = a.cx, y = a.cy;
+            const horizontalFirst = Math.random() < 0.5;
+            const horizontal = () => { while (x !== b.cx) { carve(x, y); x += Math.sign(b.cx-x); } };
+            const vertical = () => { while (y !== b.cy) { carve(x, y); y += Math.sign(b.cy-y); } };
+            if (horizontalFirst) { horizontal(); vertical(); } else { vertical(); horizontal(); }
+            carve(x,y);
+        };
+        const route = [0,1,2,5,4,3,0];
+        for (let i=1;i<route.length;i++) link(rooms[route[i-1]],rooms[route[i]]);
+        if (Math.random() < 0.5) link(rooms[1],rooms[4]);
+        return {map, rooms, start: {x:rooms[0].cx,y:rooms[0].cy}};
+    }
+
+    setupDungeonCamera(width, height) {
+        this.physics.world.setBounds(0, 0, width, height);
+        const camera = this.cameras.main;
+        camera.setBounds(0, 0, width, height);
+        camera.startFollow(this.player, true, 0.12, 0.12);
+        camera.centerOn(this.player.x, this.player.y);
+        if (this.dungeonMinimap) this.dungeonMinimap.destroy();
+        this.dungeonMinimap = this.add.graphics().setScrollFactor(0).setDepth(2800);
+        this.discoveredTiles = new Set();
+        this.minimapLastCell = null;
+    }
+
+    updateDungeonMinimap() {
+        if (!this.dungeonMinimap || !this.player || !this.forestMapData) return;
+        const px = Math.floor(this.player.x / 32), py = Math.floor(this.player.y / 32);
+        const cell = px + ',' + py;
+        if (cell === this.minimapLastCell) return;
+        this.minimapLastCell = cell;
+        for (let y=Math.max(0,py-7);y<=Math.min(this.forestRows-1,py+7);y++) {
+            for (let x=Math.max(0,px-7);x<=Math.min(this.forestCols-1,px+7);x++) this.discoveredTiles.add(x+','+y);
+        }
+        const g = this.dungeonMinimap, scale = 2;
+        const ox = this.scale.width - this.forestCols*scale - 12, oy = 48;
+        g.clear().fillStyle(0x000000,0.7).fillRect(ox-4,oy-4,this.forestCols*scale+8,this.forestRows*scale+8);
+        g.fillStyle(0xaaaaaa,0.8);
+        for (const key of this.discoveredTiles) {
+            const [x,y] = key.split(',').map(Number);
+            if (this.forestMapData[y][x] === 0) g.fillRect(ox+x*scale,oy+y*scale,scale,scale);
+        }
+        const exit = this.dungeonExitCell;
+        if (exit && this.discoveredTiles.has(exit.x+','+exit.y)) g.fillStyle(0xffd85c).fillRect(ox+exit.x*scale-1,oy+exit.y*scale-1,4,4);
+        g.fillStyle(0x66ffbb).fillRect(ox+px*scale-1,oy+py*scale-1,4,4);
+    }
+
     enterForestDungeon() {
         const tileSize = 32;
-        const width = this.scale.width;
-        const height = this.scale.height;
+        const width = 72 * tileSize;
+        const height = 48 * tileSize;
         const cols = Math.floor(width / tileSize);
         const rows = Math.ceil(height / tileSize);
 
@@ -2535,41 +2603,11 @@ class MainScene extends Phaser.Scene {
             this.goreStains = [];
         }
 
-        const mapData = [];
-        for (let y = 0; y < rows; y++) {
-            const row = [];
-            for (let x = 0; x < cols; x++) {
-                row.push(1);
-            }
-            mapData.push(row);
-        }
-
-        const startX = Math.floor(cols / 2);
-        const startY = Math.floor(rows / 2);
-        let cx = startX;
-        let cy = startY;
-
-        mapData[cy][cx] = 0;
-
-        const target = Math.floor(cols * rows * 0.45);
-        let carved = 1;
-
-        const dirs = [
-            { x: 1, y: 0 },
-            { x: -1, y: 0 },
-            { x: 0, y: 1 },
-            { x: 0, y: -1 }
-        ];
-
-        while (carved < target) {
-            const dir = Phaser.Utils.Array.GetRandom(dirs);
-            cx = Phaser.Math.Clamp(cx + dir.x, 1, cols - 2);
-            cy = Phaser.Math.Clamp(cy + dir.y, 1, rows - 2);
-            if (mapData[cy][cx] === 1) {
-                mapData[cy][cx] = 0;
-                carved++;
-            }
-        }
+        const layout = this.generateDungeonLayout(cols, rows);
+        const mapData = layout.map;
+        const startX = layout.start.x;
+        const startY = layout.start.y;
+        this.dungeonRooms = layout.rooms;
 
         this.forestTileSize = tileSize;
         this.forestCols = cols;
@@ -3067,6 +3105,7 @@ class MainScene extends Phaser.Scene {
         const spawnX = startX * tileSize + tileSize / 2;
         const spawnY = startY * tileSize + tileSize / 2;
         this.player.setPosition(spawnX, spawnY);
+        this.setupDungeonCamera(width, height);
         if (this.player.body) {
             this.player.body.setVelocity(0, 0);
         }
@@ -3098,8 +3137,8 @@ class MainScene extends Phaser.Scene {
 
     enterCastleDungeon() {
         const tileSize = 32;
-        const width = this.scale.width;
-        const height = this.scale.height;
+        const width = 72 * tileSize;
+        const height = 48 * tileSize;
         const cols = Math.floor(width / tileSize);
         const rows = Math.ceil(height / tileSize);
 
@@ -3161,41 +3200,11 @@ class MainScene extends Phaser.Scene {
             this.goreStains = [];
         }
 
-        const mapData = [];
-        for (let y = 0; y < rows; y++) {
-            const row = [];
-            for (let x = 0; x < cols; x++) {
-                row.push(1);
-            }
-            mapData.push(row);
-        }
-
-        const startX = Math.floor(cols / 2);
-        const startY = Math.floor(rows / 2);
-        let cx = startX;
-        let cy = startY;
-
-        mapData[cy][cx] = 0;
-
-        const target = Math.floor(cols * rows * 0.45);
-        let carved = 1;
-
-        const dirs = [
-            { x: 1, y: 0 },
-            { x: -1, y: 0 },
-            { x: 0, y: 1 },
-            { x: 0, y: -1 }
-        ];
-
-        while (carved < target) {
-            const dir = Phaser.Utils.Array.GetRandom(dirs);
-            cx = Phaser.Math.Clamp(cx + dir.x, 1, cols - 2);
-            cy = Phaser.Math.Clamp(cy + dir.y, 1, rows - 2);
-            if (mapData[cy][cx] === 1) {
-                mapData[cy][cx] = 0;
-                carved++;
-            }
-        }
+        const layout = this.generateDungeonLayout(cols, rows);
+        const mapData = layout.map;
+        const startX = layout.start.x;
+        const startY = layout.start.y;
+        this.dungeonRooms = layout.rooms;
 
         this.forestTileSize = tileSize;
         this.forestCols = cols;
@@ -4056,6 +4065,7 @@ class MainScene extends Phaser.Scene {
         const spawnX = startX * tileSize + tileSize / 2;
         const spawnY = startY * tileSize + tileSize / 2;
         this.player.setPosition(spawnX, spawnY);
+        this.setupDungeonCamera(width, height);
         if (this.player.body) {
             this.player.body.setVelocity(0, 0);
         }
@@ -4708,6 +4718,7 @@ class MainScene extends Phaser.Scene {
     }
 
     update(time, delta) {
+        this.updateDungeonMinimap();
         if (!this.isGameOver && this.player && this.player.active && typeof this.runElapsedTime === 'number') {
             this.runElapsedTime += delta;
         }
