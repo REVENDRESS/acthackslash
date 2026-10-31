@@ -2279,6 +2279,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     takeDamage(amount, source) {
+        if (this.scene.isFloorTransition || this.scene.isGameOver) return;
         if (this.isGodMode) return;
 
         if (this.isDashing) return;

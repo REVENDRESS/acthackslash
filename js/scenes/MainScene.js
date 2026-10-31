@@ -5352,8 +5352,17 @@ class MainScene extends Phaser.Scene {
             // Player already initialized with defaults in constructor
         }
 
+        // Entering from the base starts a fresh run, even after a death save.
+        this.player.maxHp = Number.isFinite(this.player.maxHp) && this.player.maxHp > 0 ? this.player.maxHp : 100;
+        this.player.maxStamina = Number.isFinite(this.player.maxStamina) && this.player.maxStamina > 0 ? this.player.maxStamina : 100;
+        this.player.hp = this.player.maxHp;
+        this.player.stamina = this.player.maxStamina;
+        this.player.isExhausted = false;
+        this.isGameOver = false;
         // Update HUD
         if (this.hud) {
+            this.hud.displayedHp = this.player.hp;
+            this.hud.displayedStamina = this.player.stamina;
             this.hud.updateInventoryItems();
             this.hud.updateEquipmentSlots();
         }
